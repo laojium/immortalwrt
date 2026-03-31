@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ImmortalWrt Build
+Date: Mon, 31 Mar 2025 00:00:00 +0800
+Subject: [PATCH] arm64: dts: rockchip: Fix GMAC1 PHY configuration for custom
+ 9Tripod X3568 v4 board
+
+Override GMAC1 ethernet PHY settings to match custom board hardware:
+- Change PHY address from 2 to 0
+- Change reset GPIO from GPIO2_PD1 to GPIO0_C2
+
+---
+ arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+--- a/arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts
+@@ -719,9 +719,9 @@
+
+ &mdio1 {
+-	rgmii_phy1: ethernet-phy@2 {
++	rgmii_phy1: ethernet-phy@0 {
+ 		compatible = "ethernet-phy-ieee802.3-c22";
+-		reg = <2>;
++		reg = <0>;
+ 		reset-assert-us = <20000>;
+ 		reset-deassert-us = <100000>;
+-		reset-gpios = <&gpio2 RK_PD1 GPIO_ACTIVE_LOW>;
++		reset-gpios = <&gpio0 RK_PC2 GPIO_ACTIVE_LOW>;
+
+ 		leds {
+ 			#address-cells = <1>;
+--
+2.43.0

@@ -722,7 +722,7 @@ Signed-off-by: Heiko Stuebner <heiko@sntech.de>
 +		reg = <0>;
 +		reset-assert-us = <20000>;
 +		reset-deassert-us = <100000>;
-+		reset-gpios = <&gpio0 18 GPIO_ACTIVE_LOW>;
++		reset-gpios = <&gpio0 RK_PC2 GPIO_ACTIVE_LOW>;
 +
 +
 +	};

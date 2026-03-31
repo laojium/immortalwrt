@@ -1,0 +1,161 @@
+name: Build ImmortalWrt for 9tripod-x3568-v4
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name (optional)'
+        required: false
+        default: ''
+
+env:
+  REPO_URL: https://github.com/laojium/immortalwrt
+  REPO_BRANCH: master
+  CONFIG_FILE: config/9tripod-x3568-v4.config
+  ARTIFACT_NAME: immortalwrt-9tripod-x3568-v4
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    name: Build ImmortalWrt firmware
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          hackerone: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential gcc g++ make patch \
+            libncurses5-dev libncursesw5-dev zlib1g-dev flex bison \
+            libssl-dev libelf-dev device-tree-compiler \
+            quilt python3 python3-pip python3-setuptools \
+            rsync bc unzip wget cpio git curl jq
+
+      - name: Clone ImmortalWrt source
+        run: |
+          git clone $REPO_URL immortalwrt
+          cd immortalwrt
+          git checkout $REPO_BRANCH
+          echo "COMMIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Update and install feeds
+        run: |
+          cd immortalwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Apply ethernet PHY patch
+        run: |
+          cd immortalwrt
+          DTS_FILE="target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts"
+
+          if [ -f "$DTS_FILE" ]; then
+            echo "Applying PHY configuration changes..."
+
+            # Set PHY address to 0
+            sed -i 's/reg = <0x[0-9a-fA-F]*>/reg = <0x00>/g' "$DTS_FILE"
+
+            # Set reset GPIO to GPIO0 pin 18, active-low
+            # Format: snps,reset-gpio = <&gpioX PIN ACTIVE_LOW>
+            sed -i 's/snps,reset-gpio = <&gpio[0-4] [0-9]* [0-9]*>/snps,reset-gpio = <\&gpio0 18 1>/g' "$DTS_FILE"
+
+            echo "Patch applied successfully"
+            echo "Modified content:"
+            grep -A5 "phy@" "$DTS_FILE" || grep -A5 "mdio" "$DTS_FILE"
+          else
+            echo "Warning: Device tree file not found at expected location"
+            echo "Searching for alternative locations..."
+            find target/linux/rockchip -name "*.dts" -type f
+          fi
+
+      - name: Generate configuration
+        run: |
+          cd immortalwrt
+          cat > .config << EOF
+          CONFIG_TARGET_rockchip=y
+          CONFIG_TARGET_rockchip_armv8=y
+          CONFIG_TARGET_rockchip_armv8_DEVICE_9tripod-x3568-v4=y
+          EOF
+
+          make defconfig
+
+      - name: Download dependencies
+        run: |
+          cd immortalwrt
+          make download -j8
+
+      - name: Build firmware
+        id: build
+        run: |
+          cd immortalwrt
+          make -j$(nproc) V=s || {
+            echo "Build failed, retrying with single thread..."
+            make -j1 V=s
+          }
+
+          echo "BUILD_STATUS=success" >> $GITHUB_OUTPUT
+        continue-on-error: false
+
+      - name: Get build info
+        if: steps.build.outputs.BUILD_STATUS == 'success'
+        run: |
+          cd immortalwrt
+          echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(date +%H%M%S)" >> $GITHUB_ENV
+
+      - name: Organize output files
+        if: steps.build.outputs.BUILD_STATUS == 'success'
+        run: |
+          cd immortalwrt
+          mkdir -p output
+          cp -r bin/targets/rockchip/armv8/* output/ 2>/dev/null || true
+
+          # Copy build logs
+          cp -r logs output/logs 2>/dev/null || true
+
+          # Copy config
+          cp .config output/config.txt 2>/dev/null || true
+
+          echo "Output files:"
+          ls -la output/
+
+      - name: Upload artifacts
+        if: steps.build.outputs.BUILD_STATUS == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ env.BUILD_DATE }}-${{ env.BUILD_TIME }}
+          path: immortalwrt/output/
+          retention-days: 7
+          compression-level: 9
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-failed-${{ github.run_number }}
+          path: |
+            immortalwrt/logs/
+            immortalwrt/.config
+          retention-days: 7
+
+      - name: Report build status
+        if: always()
+        run: |
+          if [ "${{ steps.build.outputs.BUILD_STATUS }}" == "success" ]; then
+            echo "Build completed successfully!"
+            echo "Download firmware from Artifacts section."
+          else
+            echo "Build failed. Check logs for details."
+          fi

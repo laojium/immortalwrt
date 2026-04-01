@@ -1,123 +1,99 @@
-name: Build ImmortalWrt for 9tripod-x3568-v4
+name: Build ImmortalWrt for YF 024E-30
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - 'patches/**'
+      - '.github/workflows/build.yml'
 
 env:
-  ARTIFACT_NAME: immortalwrt-9tripod-x3568-v4
+  IMMORTALWRT_REPO: https://github.com/laojium/immortalwrt
+  BRANCH: master
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    name: Build ImmortalWrt firmware
+    timeout-minutes: 600
 
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - name: Checkout repository
+      - name: Checkout patches repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Setup build environment
         run: |
           sudo apt update
-          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint \
-            binutils bison build-essential bzip2 ccache cmake cpio curl \
-            device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-            git gperf haveged help2man intltool libc6-dev-i386 libelf-dev \
-            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
-            libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool \
-            linphone liblzma-dev libxml2-dev libxml-parser-perl llvm \
-            lttng-tools make mtd-utils mkisofs msmtp nano ninja-build \
-            openssl p7zip-full patch pkg-config python3 python3-pip python3-pyelftools \
-            python3-setuptools python3-yaml qemu-utils rsync scons squashfs-tools \
-            subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd \
-            zlib1g-dev zstd
+          sudo apt install -y build-essential clang flex gperf \
+            libncurses5-dev libssl-dev python3 python3-dev \
+            python3-pip ruby wget curl unzip rsync \
+            quilt git subversion ninja-build
+
+      - name: Clone ImmortalWrt source
+        run: |
+          git clone --depth=1 --single-branch ${IMMORTALWRT_REPO} openwrt
+
+      - name: Verify RTL8211F PHY patch exists
+        run: |
+          if [ -f "openwrt/target/linux/rockchip/patches-6.12/014-fix-gmac1-rtl8211f.patch" ]; then
+            echo "✓ Patch 014-fix-gmac1-rtl8211f.patch found in source"
+            echo "Patch content preview:"
+            head -20 openwrt/target/linux/rockchip/patches-6.12/014-fix-gmac1-rtl8211f.patch
+          else
+            echo "✗ Patch 014-fix-gmac1-rtl8211f.patch not found in source"
+            exit 1
+          fi
 
       - name: Update and install feeds
         run: |
+          cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Generate configuration
+      - name: Configure firmware (slim build)
         run: |
-          cat > .config << EOF
+          cd openwrt
+          cat > .config <<'CONFIGEOF'
           CONFIG_TARGET_rockchip=y
           CONFIG_TARGET_rockchip_armv8=y
-          CONFIG_TARGET_rockchip_armv8_DEVICE_9tripod-x3568-v4=y
-          EOF
-
+          CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_9tripod-x3568-v4=y
+          CONFIG_PACKAGE_kmod-thermal=y
+          CONFIG_PACKAGE_kmod-leds-gpio=y
+          CONFIG_PACKAGE_kmod-realtek-pcb=y
+          CONFIG_STRIP_KERNEL_EXPORTS=y
+          CONFIG_USE_SSTRIP=y
+          CONFIGEOF
           make defconfig
 
-      - name: Download dependencies
+      - name: Download source packages
         run: |
-          make download -j8
+          cd openwrt
+          make download -j$(nproc)
 
       - name: Build firmware
-        id: build
         run: |
-          make -j$(nproc) V=s || {
-            echo "Build failed, retrying with single thread..."
-            make -j1 V=s
-          }
+          cd openwrt
+          make -j$(nproc) world V=s
 
-          echo "BUILD_STATUS=success" >> $GITHUB_OUTPUT
-        continue-on-error: false
-
-      - name: Get build info
-        if: steps.build.outputs.BUILD_STATUS == 'success'
+      - name: Prepare release artifacts
         run: |
-          echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
-          echo "BUILD_TIME=$(date +%H%M%S)" >> $GITHUB_ENV
-
-      - name: Organize output files
-        if: steps.build.outputs.BUILD_STATUS == 'success'
-        run: |
-          mkdir -p output
-          cp -r bin/targets/rockchip/armv8/* output/ 2>/dev/null || true
-
-          # Copy build logs
-          cp -r logs output/logs 2>/dev/null || true
-
-          # Copy config
-          cp .config output/config.txt 2>/dev/null || true
-
-          echo "Output files:"
-          ls -la output/
+          mkdir -p artifacts
+          cd openwrt/bin/targets/rockchip/armv8
+          for f in *.img.gz *.sha256sum; do
+            [ -f "$f" ] && cp "$f" $GITHUB_WORKSPACE/artifacts/
+          done
+          cd $GITHUB_WORKSPACE/artifacts
+          sha256sum * > checksums.sha256
 
       - name: Upload artifacts
-        if: steps.build.outputs.BUILD_STATUS == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}-${{ env.BUILD_DATE }}-${{ env.BUILD_TIME }}
-          path: output/
-          retention-days: 7
-          compression-level: 9
-
-      - name: Upload build logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs-failed-${{ github.run_number }}
-          path: |
-            logs/
-            .config
-          retention-days: 7
-
-      - name: Report build status
-        if: always()
-        run: |
-          if [ "${{ steps.build.outputs.BUILD_STATUS }}" == "success" ]; then
-            echo "Build completed successfully!"
-            echo "Download firmware from Artifacts section."
-          else
-            echo "Build failed. Check logs for details."
-          fi
+          name: immortalwrt-yf-024e-30
+          path: artifacts/
+          retention-days: 30

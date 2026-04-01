@@ -1,0 +1,54 @@
+From: YF <yf@example.com>
+Date: Tue, 1 Apr 2026 21:00:00 +0800
+Subject: [PATCH] arm64: dts: rockchip: Fix GMAC1 PHY for YF 024E-30 board
+
+Modify 9Tripod X3568 v4 device tree to support RTL8211F PHY:
+- Change PHY address from 2 to 0
+- Change reset GPIO from GPIO2_D1 to GPIO0_C2
+- Change phy-mode from rgmii-id to rgmii with manual delays
+- Disable GMAC0 (not present on hardware)
+
+Signed-off-by: YF <yf@example.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts | 28 ++++++++++++++----
+ 1 file changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts b/arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts
+index 1234567..abcdefg 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3568-9tripod-x3568-v4.dts
+@@ -280,7 +280,7 @@ &gmac0 {
+		     &gmac0_rgmii_clk
+		     &gmac0_rgmii_bus>;
+ 	phy-handle = <&rgmii_phy0>;
+ 	phy-mode = "rgmii-id";
+-	status = "okay";
++	status = "disabled";
+ };
+
+ &gmac1 {
+@@ -296,7 +297,10 @@ &gmac1 {
+		     &gmac1m1_rgmii_clk
+		     &gmac1m1_rgmii_bus>;
+ 	phy-handle = <&rgmii_phy1>;
+-	phy-mode = "rgmii-id";
++	phy-mode = "rgmii";
++	tx_delay = <0x42>;
++	rx_delay = <0x32>;
+ 	status = "okay";
+ };
+
+@@ -621,10 +625,10 @@ &mdio1 {
+ 	rgmii_phy1: ethernet-phy@2 {
+ 		compatible = "ethernet-phy-ieee802.3-c22";
+-		reg = <2>;
++		reg = <0>;
+ 		reset-assert-us = <20000>;
+ 		reset-deassert-us = <100000>;
+-		reset-gpios = <&gpio2 RK_PD1 GPIO_ACTIVE_LOW>;
++		reset-gpios = <&gpio0 RK_PC2 GPIO_ACTIVE_LOW>;
+
+ 		leds {
+ 			#address-cells = <1>;
+--
+2.43.0
